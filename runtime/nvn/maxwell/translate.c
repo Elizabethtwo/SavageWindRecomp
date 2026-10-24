@@ -1715,6 +1715,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                                                "uint(*(device ushort *)(gmem + ga))", "uint(int(*(device short *)(gmem + ga)))"};
         int nw = size == 5 ? 2 : size >= 6 ? 4 : 1;
         if (c->glsl) {  // gmem_.w[]: 32-bit words; sub-word accesses within the containing word
+            unsigned bytes = size < 2 ? 1 : size < 4 ? 2 : size == 4 ? 4 : size == 5 ? 8 : 16;
+            sp(&c->body, "      if (ok) trace_gmem(ga, %uu, %s);\n", bytes, store ? "true" : "false");
             static const char *const gl_small[] = {
                 "(gmem_.w[uint(ga >> 2)] >> (uint(ga & 3ul) * 8u)) & 0xFFu",
                 "uint(sx8(gmem_.w[uint(ga >> 2)] >> (uint(ga & 3ul) * 8u)))",
@@ -2150,9 +2152,19 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         sp(&s, "layout(std140, set = %d, binding = %d) uniform CB%d { uvec4 cb%d[%u]; };\n", set, i, i, i, n);
     }
     info->writes_gmem = info->uses_gmem && c->uses_gmem_store;
-    if (info->uses_gmem)
+    if (info->uses_gmem) {
         sp(&s, "layout(std430, set = %d, binding = %d) %sbuffer GMem { uint w[]; } gmem_;\n", set, GMEM_BUFFER_INDEX,
            c->uses_gmem_store ? "" : "readonly ");
+        sp(&s, "layout(std430, set = %d, binding = %d) buffer GMemTrace { uint w[%u]; } gmem_trace_;\n",
+           set, GMEM_TRACE_BUFFER_INDEX, GMEM_TRACE_WORDS * 2);
+        sp(&s,
+           "void trace_gmem(uint64_t ga, uint bytes, bool store) { uint p = uint(ga >> %u); uint word = p >> 5; "
+           "uint mask = 1u << (p & 31u); uint base = store ? %uu : 0u; "
+           "atomicOr(gmem_trace_.w[base + word], mask); "
+           "if ((uint(ga) & 0xFFFFu) + bytes > 0x10000u && p + 1u < %uu) { "
+           "p++; atomicOr(gmem_trace_.w[base + (p >> 5)], 1u << (p & 31u)); } }\n",
+           GMEM_TRACE_PAGE_SHIFT, GMEM_TRACE_WORDS, GMEM_TRACE_PAGE_COUNT);
+    }
     if (c->uses_rscale) {  // (vertex shaders too: texel fetches from scaled targets, e.g. depth under the sun's flare)
         sp(&s, "layout(std140, set = %d, binding = 18) uniform RScale { vec4 rscale[65]; };\n", set);
         info->uses_rscale = true;

@@ -77,6 +77,11 @@ typedef struct {
 
 // Global memory (LDG/STG) is addressed through one buffer that wraps the guest heap.
 #define GMEM_BUFFER_INDEX 17
+// Vulkan diagnostic bitmap: one read and one write bit per 64 KiB guest-heap page.
+#define GMEM_TRACE_BUFFER_INDEX 20
+#define GMEM_TRACE_PAGE_SHIFT 16
+#define GMEM_TRACE_PAGE_COUNT 53248
+#define GMEM_TRACE_WORDS (GMEM_TRACE_PAGE_COUNT / 32)
 extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
 // Debug: when translating the shader whose code starts at maxwell_dbg_code, output register
 // maxwell_dbg_reg as captured after the instruction at maxwell_dbg_pc (greyscale, all targets).

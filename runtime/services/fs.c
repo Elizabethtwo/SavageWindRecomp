@@ -16,6 +16,7 @@
 #include "../hle.h"
 #include "../ipc.h"
 #include "../language.h"
+#include "../platform.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -559,6 +560,7 @@ static void storage(Service *s, IpcReq *req, IpcResp *resp) {
         if (!b) { resp->result = MAKE_RESULT(2, 6001); break; }
         if (size > b->size) size = b->size;
         kernel_watch_write("romfs read", b->addr, size);
+        plat_commit(b->addr, size);
         ssize_t n = romfs_read(st->fd, (uint8_t *)(uintptr_t)b->addr, size, off);
         if (n < 0) LOG("[fs] storage read failed at %llx: %s\n", off, strerror(errno));
         {
@@ -629,6 +631,7 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         if ((uint64_t)size > b->size) size = (int64_t)b->size;
         kernel_watch_write("file read", b->addr, (uint64_t)size);
+        plat_commit(b->addr, (uint64_t)size);
         ssize_t n;
         if (f->patched) {  // (test warp)
             n = off >= 0 && (uint64_t)off < f->patched_size ? (ssize_t)((uint64_t)size < f->patched_size - (uint64_t)off ? (uint64_t)size : f->patched_size - (uint64_t)off) : 0;

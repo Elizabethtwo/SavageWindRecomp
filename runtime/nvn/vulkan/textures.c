@@ -281,11 +281,11 @@ static VmaAllocationCreateInfo image_allocation_info(const VkImageCreateInfo *ci
         return ai;
     }
     if (!image_priority_pools[memory_type] && !image_priority_pool_failed[memory_type]) {
-        VmaPoolCreateInfo pi = {.memoryTypeIndex = memory_type, .priority = 0.1f};
+        VmaPoolCreateInfo pi = {.memoryTypeIndex = memory_type, .priority = 1.0f};
         r = vmaCreatePool(g_vk.vma, &pi, &image_priority_pools[memory_type]);
         if (r != VK_SUCCESS) {
             image_priority_pool_failed[memory_type] = true;
-            LOG("[vk] could not create low-priority image memory pool for type %u (%d); using default allocation\n",
+            LOG("[vk] could not create high-priority image memory pool for type %u (%d); using default allocation\n",
                 memory_type, r);
         }
     }
@@ -376,6 +376,7 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         log_memory_budget("at image allocation failure");
         LOG("[vk] image allocation ran out of memory (%ux%ux%u, %u layers, %u levels); draining GPU work and retrying\n",
             tw, th, depth, layers, levels);
+        vk_gmem_trace_report();
         renderer_flush();
         vk_collect_dead();
         evict_idle_images();
@@ -384,8 +385,8 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         if (g_vk.memory_priority) {
             retry_ai.pool = VK_NULL_HANDLE;
             retry_ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-            retry_ai.priority = 0.1f;
-            LOG("[vk] retrying image as dedicated low-priority memory\n");
+            retry_ai.priority = 1.0f;
+            LOG("[vk] retrying image as dedicated high-priority memory\n");
         }
 #endif
         r = vmaCreateImage(g_vk.vma, &ci, &retry_ai, &b->image, &b->mem, NULL);
