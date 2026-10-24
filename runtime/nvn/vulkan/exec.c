@@ -24,6 +24,7 @@ static uint64_t stat_gw_waits, stat_gw_holds;  // draws / dispatches that waited
 static uint64_t stat_uub, stat_uub_same, stat_gcopy_hit, stat_gcopy_miss, stat_gcopy_bytes;  // UpdateUniformBuffer; guest_copy cache
 static uint64_t stat_feedback_live;  // depth attachments sampled as they are (read-only feedback, no copy)
 static uint64_t stat_feedback_loops, stat_feedback_barriers;  // draws sampling a target they write, in a feedback loop
+// Sparse-heap timing and bind logs are collected only with SAVAGEWIND_VK_PROF=1.
 static uint64_t stat_sparse_refreshes, stat_sparse_refresh_ns, stat_sparse_import_ns, stat_sparse_bind_ns;
 static uint64_t stat_sparse_imports, stat_sparse_bind_batches, stat_sparse_bound_bytes;
 static bool pass_ds_written;         // a draw of the current pass wrote depth or stencil
@@ -734,15 +735,17 @@ const char *renderer_stats(void) {
         snprintf(stats_text + n, sizeof stats_text - n, ", uub %llu (%llu same), gcopy %llu hit %llu miss (%.1f MB)",
                  (unsigned long long)stat_uub, (unsigned long long)stat_uub_same, (unsigned long long)stat_gcopy_hit,
                  (unsigned long long)stat_gcopy_miss, stat_gcopy_bytes / 1048576.0);
-        n = strlen(stats_text);
-        snprintf(stats_text + n, sizeof stats_text - n,
-                 " | sparse refresh %llu (%.1f ms) import %llu (%.1f ms) bind %llu (%.1f ms, %.1f MB)",
-                 (unsigned long long)stat_sparse_refreshes, stat_sparse_refresh_ns / 1e6,
-                 (unsigned long long)stat_sparse_imports, stat_sparse_import_ns / 1e6,
-                 (unsigned long long)stat_sparse_bind_batches, stat_sparse_bind_ns / 1e6,
-                 stat_sparse_bound_bytes / 1048576.0);
-        stat_sparse_refreshes = stat_sparse_refresh_ns = stat_sparse_import_ns = stat_sparse_bind_ns = 0;
-        stat_sparse_imports = stat_sparse_bind_batches = stat_sparse_bound_bytes = 0;
+        if (prof) {
+            n = strlen(stats_text);
+            snprintf(stats_text + n, sizeof stats_text - n,
+                     " | sparse refresh %llu (%.1f ms) import %llu (%.1f ms) bind %llu (%.1f ms, %.1f MB)",
+                     (unsigned long long)stat_sparse_refreshes, stat_sparse_refresh_ns / 1e6,
+                     (unsigned long long)stat_sparse_imports, stat_sparse_import_ns / 1e6,
+                     (unsigned long long)stat_sparse_bind_batches, stat_sparse_bind_ns / 1e6,
+                     stat_sparse_bound_bytes / 1048576.0);
+            stat_sparse_refreshes = stat_sparse_refresh_ns = stat_sparse_import_ns = stat_sparse_bind_ns = 0;
+            stat_sparse_imports = stat_sparse_bind_batches = stat_sparse_bound_bytes = 0;
+        }
         n = strlen(stats_text);
         if (stat_build_waits) snprintf(stats_text + n, sizeof stats_text - n, ", build waits %llu", (unsigned long long)stat_build_waits);
         stat_build_waits = 0;
@@ -3352,8 +3355,8 @@ static bool gmem_sparse_refresh(uint64_t size) {
     uint64_t generation = plat_guest_commit_generation();
     if (generation == gmem_sparse_generation) return true;
 
-    uint64_t refresh_start = SDL_GetTicksNS();
-    stat_sparse_refreshes++;
+    uint64_t refresh_start = prof ? SDL_GetTicksNS() : 0;
+    if (prof) stat_sparse_refreshes++;
     uint32_t first_new_mem = gmem_sparse_nmem;
     uint32_t bind_count = 0;
     uint64_t page_count = size / GMEM_SPARSE_PAGE_SIZE;
@@ -3388,11 +3391,11 @@ static bool gmem_sparse_refresh(uint64_t size) {
             uint64_t offset = run_start * GMEM_SPARSE_CHUNK_SIZE;
             uint64_t bytes = (chunk - run_start) * GMEM_SPARSE_CHUNK_SIZE;
             if (offset + bytes > size) bytes = size - offset;
-            uint64_t import_start = SDL_GetTicksNS();
+            uint64_t import_start = prof ? SDL_GetTicksNS() : 0;
             bool imported = gmem_sparse_import_range(offset, bytes, &mem);
-            stat_sparse_import_ns += SDL_GetTicksNS() - import_start;
+            if (prof) stat_sparse_import_ns += SDL_GetTicksNS() - import_start;
             if (!imported) goto fail;
-            stat_sparse_imports++;
+            if (prof) stat_sparse_imports++;
             gmem_sparse_mem[gmem_sparse_nmem++] = mem;
             gmem_sparse_binds[bind_count++] = (VkSparseMemoryBind){
                 .resourceOffset = offset, .size = bytes, .memory = mem, .memoryOffset = 0};
@@ -3419,9 +3422,9 @@ static bool gmem_sparse_refresh(uint64_t size) {
             .pBufferBinds = &buffer_bind,
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &gmem_sparse_timeline};
-        uint64_t bind_start = SDL_GetTicksNS();
+        uint64_t bind_start = prof ? SDL_GetTicksNS() : 0;
         VkResult r = vkQueueBindSparse(g_vk.queue, 1, &bind_info, VK_NULL_HANDLE);
-        stat_sparse_bind_ns += SDL_GetTicksNS() - bind_start;
+        if (prof) stat_sparse_bind_ns += SDL_GetTicksNS() - bind_start;
         if (r != VK_SUCCESS) {
             LOG("[vk] sparse guest heap batch binding failed (%d)\n", r);
             goto fail;
@@ -3432,19 +3435,21 @@ static bool gmem_sparse_refresh(uint64_t size) {
             uint64_t pages = gmem_sparse_binds[i].size / GMEM_SPARSE_PAGE_SIZE;
             memset(&gmem_sparse_bound_pages[first], 1, (size_t)pages);
         }
-        uint64_t total_bytes = 0;
-        for (uint32_t i = 0; i < bind_count; i++) total_bytes += gmem_sparse_binds[i].size;
-        stat_sparse_bind_batches++;
-        stat_sparse_bound_bytes += total_bytes;
-        LOG("[vk] sparse guest heap batch-bound %u ranges (%llu KiB)\n", bind_count,
-            (unsigned long long)(total_bytes >> 10));
+        if (prof) {
+            uint64_t total_bytes = 0;
+            for (uint32_t i = 0; i < bind_count; i++) total_bytes += gmem_sparse_binds[i].size;
+            stat_sparse_bind_batches++;
+            stat_sparse_bound_bytes += total_bytes;
+            LOG("[vk] sparse guest heap batch-bound %u ranges (%llu KiB)\n", bind_count,
+                (unsigned long long)(total_bytes >> 10));
+        }
     }
     gmem_sparse_generation = generation;
-    stat_sparse_refresh_ns += SDL_GetTicksNS() - refresh_start;
+    if (prof) stat_sparse_refresh_ns += SDL_GetTicksNS() - refresh_start;
     return true;
 
 fail:
-    stat_sparse_refresh_ns += SDL_GetTicksNS() - refresh_start;
+    if (prof) stat_sparse_refresh_ns += SDL_GetTicksNS() - refresh_start;
     while (gmem_sparse_nmem > first_new_mem) vkFreeMemory(g_vk.dev, gmem_sparse_mem[--gmem_sparse_nmem], NULL);
     return false;
 }

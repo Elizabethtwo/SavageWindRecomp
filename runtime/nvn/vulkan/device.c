@@ -369,7 +369,9 @@ static void create_device(void) {
     LOG("[vk] memory budget extension %s\n", g_vk.memory_budget ? "on" : "not supported");
 #endif
 #ifdef VK_EXT_memory_priority
-    if (has_ext(ep, ne, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME)) {
+    const char *memory_priority_env = getenv("SAVAGEWIND_VK_MEMORY_PRIORITY");
+    bool request_memory_priority = memory_priority_env && !strcmp(memory_priority_env, "1");
+    if (request_memory_priority && has_ext(ep, ne, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME)) {
         VkPhysicalDeviceMemoryPriorityFeaturesEXT priority_have = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT};
         VkPhysicalDeviceFeatures2 priority_query = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &priority_have};
@@ -377,7 +379,10 @@ static void create_device(void) {
         g_vk.memory_priority = priority_have.memoryPriority;
         if (g_vk.memory_priority) ext[n_ext++] = VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME;
     }
-    LOG("[vk] memory priority %s\n", g_vk.memory_priority ? "on" : "not supported");
+    const char *memory_priority_status = g_vk.memory_priority ? "on" :
+                                        request_memory_priority ? "not supported" :
+                                                                  "off (set SAVAGEWIND_VK_MEMORY_PRIORITY=1 to enable)";
+    LOG("[vk] memory priority %s\n", memory_priority_status);
 #endif
 #ifdef VK_EXT_pageable_device_local_memory
     if (has_ext(ep, ne, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME)) {
