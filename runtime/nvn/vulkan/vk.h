@@ -36,7 +36,7 @@ typedef struct {
     VkPipelineCache pcache_pre;  // the precompiled shaders' libraries (cache/vk_precompiled.bin; read only while playing)
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
-    bool custom_border, divisor, host_import, wide_lines;
+    bool custom_border, divisor, host_import, memory_budget, memory_priority, wide_lines;
     bool feat_aniso;  // samplerAnisotropy (Video > Anisotropic filtering)
     bool depth_clamp;          // depthClamp feature (nvnCommandBufferSetDepthClamp: shadow maps keep occluders before the near plane)
     bool occlusion_precise;    // occlusionQueryPrecise: SAMPLES_PASSED counts samples, not just "any"
