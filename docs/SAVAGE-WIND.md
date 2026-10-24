@@ -1220,6 +1220,10 @@ botella entre trabajo de GPU, sincronización y trabajo del juego.
 
 Instrumentación disponible:
 
+- `SAVAGEWIND_GMEM_TRACE=1` añade instrumentación atómica a cada acceso de shader Vulkan al heap invitado y reserva
+  un mapa de páginas. Está desactivada por defecto porque puede afectar notablemente al rendimiento; úsala solo
+  para diagnóstico. Las páginas tocadas se imprimen durante la recuperación de un fallo de asignación de imágenes.
+  La caché de shaders y pipelines se separa automáticamente entre los modos con y sin traza.
 - `SAVAGEWIND_VK_PROF=1` añade desglose de tiempo CPU/GPU, preparación de draws, comprobaciones de heap, compilación,
   esperas y contadores de importación/enlace sparse. Los cronómetros y las líneas `sparse guest heap batch-bound`
   también están detrás de este flag; sin él, el heap sparse se comporta igual pero no emite esos diagnósticos.

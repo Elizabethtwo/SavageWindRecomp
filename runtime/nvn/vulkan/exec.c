@@ -3639,8 +3639,9 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
     if (copy < 0) copy = getenv("SAVAGEWIND_VK_COPY_VERTICES") != NULL;
     if (copy || addr < HEAP_BASE) return false;
 #ifdef _WIN32
-    if (g_vk.sparse_buffer && g_vk.sparse_queue && g_vk.sparse_nonresident_strict && g_vk.sparse_host_import &&
-        addr < HEAP_BASE + HEAP_MAX && size && addr + size > addr) {
+    if (plat_guest_sparse_heap_enabled() && g_vk.sparse_buffer && g_vk.sparse_queue &&
+        g_vk.sparse_nonresident_strict && g_vk.sparse_host_import && addr < HEAP_BASE + HEAP_MAX &&
+        size && addr + size > addr) {
         uint64_t end = addr + size;
         uint64_t heap_size = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
         if (heap_size > HEAP_MAX) heap_size = HEAP_MAX;

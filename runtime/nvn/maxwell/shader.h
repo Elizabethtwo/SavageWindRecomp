@@ -100,5 +100,6 @@ void maxwell_free(ShaderInfo *s);
 size_t maxwell_binary_size(const uint8_t *code, size_t max_size, int stage);
 const char *maxwell_translator_id(void);
 bool maxwell_translation_uncacheable(void);
+bool maxwell_gmem_trace_enabled(void);
 // Disassemble for debugging (writes text to f).
 void maxwell_disassemble(const uint8_t *code, size_t max_size, int stage, void *file);
