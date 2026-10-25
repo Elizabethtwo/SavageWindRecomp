@@ -146,6 +146,28 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
     return (p.optimalTilingFeatures & want) == want;
 }
 
+static bool block_view_image_supported(VkFormat format, VkImageType type, uint32_t width, uint32_t height, uint32_t depth,
+                                       uint32_t levels, uint32_t layers, uint32_t samples) {
+    VkImageCreateFlags flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT |
+                               VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+    if (type == VK_IMAGE_TYPE_3D) flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+    if (type == VK_IMAGE_TYPE_2D && layers >= 6 && width == height) flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    VkPhysicalDeviceImageFormatInfo2 info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+        .format = format,
+        .type = type,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .flags = flags,
+    };
+    VkImageFormatProperties2 properties = {.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
+    if (vkGetPhysicalDeviceImageFormatProperties2(g_vk.phys, &info, &properties) != VK_SUCCESS) return false;
+    VkImageFormatProperties *p = &properties.imageFormatProperties;
+    return width <= p->maxExtent.width && height <= p->maxExtent.height && depth <= p->maxExtent.depth &&
+           levels <= p->maxMipLevels && layers <= p->maxArrayLayers && (p->sampleCounts & samples) != 0;
+}
+
 // ================================================================== output resolution / per-frame clears
 // Render targets are allocated at one of two scales (runtime/nvn/output_scale.c sets both every presented frame):
 //   RS_OUT    the game's final image (1920x1080, its halves) and the display images: the window's resolution, so the
@@ -307,6 +329,7 @@ void vk_collect_dead(void) {
 
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
+    b->block_view_renderable = false;
     b->scalable = b->rs_group != RS_NONE;
     b->guest_w = t->width;
     b->sx = rs_want(b, 0);
@@ -360,16 +383,35 @@ static void create_image(NvnTexture *t, TexBackend *b) {
     else if (format_supports(vf, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     VkImageCreateFlags flags = 0;
     if (!depthfmt) flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;  // format views (NVN texture views, raw sRGB views)
+    bool block_view_candidate =
+        (vf == VK_FORMAT_BC4_UNORM_BLOCK || vf == VK_FORMAT_BC4_SNORM_BLOCK) &&
+        format_supports(VK_FORMAT_R16G16B16A16_UINT,
+                        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                            VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) &&
+        block_view_image_supported(vf, type, tw, th, depth, levels, layers, samples);
+    VkFormat block_view_formats[2] = {vf, VK_FORMAT_R16G16B16A16_UINT};
+    VkImageFormatListCreateInfo block_view_format_list = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+        .viewFormatCount = 2,
+        .pViewFormats = block_view_formats,
+    };
+    if (block_view_candidate) {
+        flags |= VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    }
     if (type == VK_IMAGE_TYPE_2D && layers >= 6 && tw == th && samples == 1) flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     b->slices_renderable = type == VK_IMAGE_TYPE_3D && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (b->slices_renderable) flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;  // (Vulkan 1.1) 2D views of slices
-    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .flags = flags, .imageType = type, .format = vf,
+    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                            .pNext = block_view_candidate ? &block_view_format_list : NULL,
+                            .flags = flags, .imageType = type, .format = vf,
                             .extent = {tw, th, depth}, .mipLevels = levels, .arrayLayers = layers,
                             .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
     VmaAllocationCreateInfo ai = image_allocation_info(&ci);
     // 2D color targets may be sampled by the draws that render into them (exec.c resolve_feedback: a feedback loop)
-    b->feedback_ok = g_vk.feedback_loop && type == VK_IMAGE_TYPE_2D && samples == 1 && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    b->feedback_ok = !block_view_candidate && g_vk.feedback_loop && type == VK_IMAGE_TYPE_2D && samples == 1 &&
+                     (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (b->feedback_ok) ci.usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     if (image_out_of_memory(r)) {
@@ -396,8 +438,31 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         ci.usage &= ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
         r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     }
+    if (block_view_candidate && image_format_fallback_error(r)) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            LOG("[vk] BC4 block render views unavailable; keeping BC4 textures sampleable but not renderable\n");
+        }
+        block_view_candidate = false;
+        flags &= ~(VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
+        usage &= ~VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (type == VK_IMAGE_TYPE_3D) flags &= ~VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+        b->slices_renderable = type == VK_IMAGE_TYPE_3D && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+        ci.pNext = NULL;
+        ci.flags = flags;
+        ci.usage = usage;
+        b->feedback_ok = g_vk.feedback_loop && type == VK_IMAGE_TYPE_2D && samples == 1 &&
+                         (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+        if (b->feedback_ok) {
+            ci.usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
+        }
+        ai = image_allocation_info(&ci);
+        r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
+    }
     if (image_format_fallback_error(r)) {
         LOG("[vk] image creation failed (%d): nvn fmt %#x %ux%ux%u target %u\n", r, t->format, t->width, t->height, t->depth, t->target);
+        block_view_candidate = false;
         ci.format = vf = VK_FORMAT_R8G8B8A8_UNORM;
         ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -413,6 +478,14 @@ static void create_image(NvnTexture *t, TexBackend *b) {
     }
     static uint64_t serials;
     b->serial = __atomic_add_fetch(&serials, 1, __ATOMIC_RELAXED);
+    b->block_view_renderable = block_view_candidate;
+    if (b->block_view_renderable) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            LOG("[vk] BC4 block render views enabled (BC4 -> R16G16B16A16_UINT)\n");
+        }
+    }
     b->format = vf;
     b->width = tw; b->height = th; b->depth = depth; b->layers = layers; b->levels = levels; b->samples = samples;
     b->aspect = depthfmt ? aspect_of(t->format) : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1167,7 +1240,15 @@ VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uin
     }
     extern uint64_t prof_views_created;
     prof_views_created++;
-    VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = b->image, .viewType = type,
+    VkImageViewUsageCreateInfo view_usage = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    if (b->block_view_renderable) {
+        if (fmt == b->format) view_usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        else if (fmt == VK_FORMAT_R16G16B16A16_UINT) view_usage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        else return VK_NULL_HANDLE;
+    }
+    VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                .pNext = b->block_view_renderable ? &view_usage : NULL,
+                                .image = b->image, .viewType = type,
                                 .format = fmt, .components = sw, .subresourceRange = {aspect, lv0, nlv, ly0, nly}};
     VkImageView v;
     if (vkCreateImageView(g_vk.dev, &vi, NULL, &v) != VK_SUCCESS) {
@@ -1224,6 +1305,53 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
     if (v && (v->setmask & 4) && !(b->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
         VkFormat vf = fmt_of(v->format).vf;
         if (vk_format(t->format) == b->format) fmt = vf;  // (fallback images keep their own format)
+    }
+    if (render && v && (v->setmask & 4) && fmt != b->format) {
+        static int enabled = -1;
+        static struct { NvnTexture *texture; uint16_t format; uint8_t setmask; } logged[128];
+        static uint32_t nlogged;
+        if (enabled < 0) enabled = getenv("SAVAGEWIND_LOG_RENDER_VIEW_FORMAT") != NULL;
+        if (enabled) {
+            bool seen = false;
+            for (uint32_t i = 0; i < nlogged; i++)
+                if (logged[i].texture == t && logged[i].format == v->format && logged[i].setmask == v->setmask) {
+                    seen = true;
+                    break;
+                }
+            if (!seen && nlogged < sizeof logged / sizeof logged[0]) {
+                logged[nlogged].texture = t;
+                logged[nlogged].format = v->format;
+                logged[nlogged].setmask = v->setmask;
+                nlogged++;
+                LOG("[vk] render view format override: texture %p id %llu addr %#llx %ux%ux%u target %u "
+                    "texture NVN fmt %#x/VK %d, image VK fmt %d, view NVN fmt %#x/VK %d setmask %#x\n",
+                    (void *)t, (unsigned long long)t->debug_id, (unsigned long long)t->addr, t->width, t->height, t->depth,
+                    t->target, t->format, vk_format(t->format), b->format, v->format, fmt, v->setmask);
+            }
+        }
+    }
+    VkFormatFeatureFlags attachment_feature =
+        (b->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
+            ? VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+            : VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    bool renderable = format_supports(b->format, attachment_feature);
+    if (render && b->block_view_renderable && fmt == VK_FORMAT_R16G16B16A16_UINT &&
+        attachment_feature == VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)
+        renderable = true;
+    if (render && !renderable) {
+        static VkFormat logged_formats[16];
+        static uint32_t nlogged;
+        bool seen = false;
+        for (uint32_t i = 0; i < nlogged; i++)
+            if (logged_formats[i] == b->format) { seen = true; break; }
+        if (!seen && nlogged < sizeof logged_formats / sizeof logged_formats[0]) {
+            logged_formats[nlogged++] = b->format;
+            LOG("[vk] refusing non-renderable texture as %s target: texture %p id %llu addr %#llx "
+                "NVN fmt %#x image VK fmt %d view VK fmt %d\n",
+                attachment_feature == VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT ? "color" : "depth/stencil",
+                (void *)t, (unsigned long long)t->debug_id, (unsigned long long)t->addr, t->format, b->format, fmt);
+        }
+        return VK_NULL_HANDLE;
     }
     uint32_t lv0 = v && (v->setmask & 1) ? v->base_level : 0;
     uint32_t nlv = v && (v->setmask & 1) && v->num_levels ? v->num_levels : b->levels - (lv0 < b->levels ? lv0 : 0);

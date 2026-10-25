@@ -1139,6 +1139,25 @@ static void vk_end_pass_at(int line) {
 
 static uint32_t level_extent(uint32_t v, uint32_t lv) { v >>= lv; return v ? v : 1; }
 
+static VkFormat color_attachment_format(int i, const TexBackend *b) {
+    NvnTexture *t = st.rt.color[i];
+    return st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4) && vk_format(t->format) == b->format
+               ? vk_format(st.rt.cview[i].format)
+               : b->format;
+}
+
+static uint32_t attachment_extent(const TexBackend *b, VkFormat fmt, uint32_t lv, bool horizontal) {
+    uint32_t extent = level_extent(horizontal ? b->width : b->height, lv);
+    if (b->block_view_renderable && fmt == VK_FORMAT_R16G16B16A16_UINT) extent = (extent + 3) / 4;
+    return extent;
+}
+
+static void reset_viewport_scale(void) {
+    vp_sx = pass_sx;
+    vp_sy = pass_sy;
+    vp_ox = vp_oy = 0;
+}
+
 static void begin_pass(void) {
     if (in_pass && !st.rt_dirty) return;
     vk_end_pass();
@@ -1237,6 +1256,7 @@ static void begin_pass(void) {
         ca[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         ca[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        pass_color[i] = color_attachment_format(i, b);
         if (b->feedback_seen && b->feedback_ok) {  // a target some draw samples while writing it (resolve_feedback)
             if (g_vk.feedback_layout) {
                 if (!b->in_feedback_layout && pass_nfbl < 8) {
@@ -1256,13 +1276,18 @@ static void begin_pass(void) {
         bool fresh = (int)renderer_texture_level_fresh(t) | (int)renderer_texture_frame_fresh(t);  // both: each marks its state
         if (renderer_texture_first_write(t) || fresh) {
             ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            ca[i].clearValue.color.float32[3] = fresh ? 0.0f : 1.0f;
+            if (pass_color[i] == VK_FORMAT_R16G16B16A16_UINT)
+                ca[i].clearValue.color.uint32[3] = fresh ? 0u : 1u;
+            else
+                ca[i].clearValue.color.float32[3] = fresh ? 0.0f : 1.0f;
         }
-        pass_color[i] = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4) && vk_format(t->format) == b->format
-                      ? vk_format(st.rt.cview[i].format) : b->format;
         uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
-        uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
-        if (!w) { renderer_texture_scale(t, &pass_sx, &pass_sy); pass_out = b->rs_group == RS_OUT; w = ew; }
+        uint32_t ew = attachment_extent(b, pass_color[i], lv, true), eh = attachment_extent(b, pass_color[i], lv, false);
+        if (!w) {
+            renderer_texture_scale(t, &pass_sx, &pass_sy);
+            pass_out = b->rs_group == RS_OUT;
+            w = ew;
+        }
         if (ew < minw) minw = ew;
         if (eh < minh) minh = eh;
         pass_samples = b->samples;
@@ -1296,15 +1321,34 @@ static void begin_pass(void) {
     vkCmdBeginRendering(cb, &ri);
     in_pass = true;
     key_gen++;  // (the pass's formats are in the pipeline key)
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    reset_viewport_scale();
     stat_passes++;
 }
 
 static void pass_size(int *w, int *h) {
     *w = *h = 0;
-    for (int i = 0; i < st.rt.ncolor && !*w; i++)
-        if (st.rt.color[i]) { *w = (int)st.rt.color[i]->width; *h = (int)st.rt.color[i]->height; }
-    if (!*w && st.rt.depth) { *w = (int)st.rt.depth->width; *h = (int)st.rt.depth->height; }
+    for (int i = 0; i < st.rt.ncolor && !*w; i++) {
+        NvnTexture *t = st.rt.color[i];
+        TexBackend *b = t ? t->backend : NULL;
+        if (!t) continue;
+        if (b) {
+            uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
+            VkFormat fmt = color_attachment_format(i, b);
+            *w = (int)level_extent(t->width, lv);
+            *h = (int)level_extent(t->height, lv);
+            if (b->block_view_renderable && fmt == VK_FORMAT_R16G16B16A16_UINT) {
+                *w = (*w + 3) / 4;
+                *h = (*h + 3) / 4;
+            }
+        } else {
+            *w = (int)t->width;
+            *h = (int)t->height;
+        }
+    }
+    if (!*w && st.rt.depth) {
+        *w = (int)st.rt.depth->width;
+        *h = (int)st.rt.depth->height;
+    }
     *w = (int)lroundf(*w * pass_sx);
     *h = (int)lroundf(*h * pass_sy);
 }
@@ -1466,7 +1510,7 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
                   uint32_t smask) {
     begin_pass();
     VkCommandBuffer cb = vk_cmd();
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    reset_viewport_scale();
     VkRect2D rect = scissor_rect();
     if (!rect.extent.width || !rect.extent.height) return;
     if (index >= 0 && (index >= (int)pass_ncolor || pass_color[index] == VK_FORMAT_UNDEFINED)) return;
@@ -4775,7 +4819,12 @@ static void draw_(CmdRec *r, bool indexed) {
         vkey.flip_y = fkey.flip_y = origin == 0;
         vkey.depth_minus_one = dmode == 0;
         for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
-        for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
+        for (int i = 0; i < st.rt.ncolor; i++)
+            if (st.rt.color[i]) {
+                uint32_t format = st.rt.color[i]->format;
+                if (st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4)) format = st.rt.cview[i].format;
+                fkey.rt_kind[i] = (uint8_t)rt_kind(format);
+            }
         pr = get_program(st.program, &vkey, &fkey);
         pm.gen = key_gen; pm.np = st.program; pm.origin = origin; pm.dmode = dmode; pm.pr = pr;
     }
@@ -5124,7 +5173,7 @@ have_pipe:
     // ---- textures first (their scales feed the widescreen decision and the rscale table), then the viewport
     float *vp = st.viewport[0];
     float zn = st.depth_range[0][0], zf = st.depth_range[0][1];
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    reset_viewport_scale();
     float tint[8] = {0};  // per-draw tint (translate.c `ltint`): no game-specific highlight sets one yet
     // fragment textures are bound before deciding the viewport (tex_sc / tex_wh), rscale depends on the decision:
     // build the vertex set now and the fragment set after the decision (stage_set fills tex_sc for stage 1).

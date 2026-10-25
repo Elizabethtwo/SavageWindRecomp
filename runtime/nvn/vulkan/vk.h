@@ -96,6 +96,7 @@ typedef struct TexBackend {
     VkImageAspectFlags aspect;
     bool gpu_owned, uploaded, dynamic;
     bool slices_renderable;  // 3D image made 2D-array compatible: its slices are render targets
+    bool block_view_renderable;  // BC4 blocks can be rendered through an R16G16B16A16_UINT view
     bool feedback_ok;        // made with VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT (sampled while it is rendered to)
     bool feedback_seen;      // a draw sampled it while writing it: its passes begin with the feedback loop enabled
     bool in_feedback_layout; // in ATTACHMENT_FEEDBACK_LOOP_OPTIMAL now (g_vk.feedback_layout: a pass that loops, exec.c)
