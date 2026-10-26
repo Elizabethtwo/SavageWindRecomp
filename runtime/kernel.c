@@ -861,14 +861,18 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         backend_heap_set(size);  // (the renderer may back the heap with GPU memory: Linux, exec.c)
         region_remove(HEAP_BASE);
         if (size) {
-#ifdef _WIN32
+            #ifdef _WIN32
             bool eager = !plat_guest_sparse_heap_enabled();
-            plat_guest_sparse_heap_range(HEAP_BASE, size);
+
+            if (plat_guest_sparse_heap_enabled())
+                plat_guest_sparse_heap_range(HEAP_BASE, size);
+
             LOG("[kernel] guest heap backing: %s commit (sparse opt-in %s)\n",
-                eager ? "eager" : "lazy", eager ? "off" : "on");
-#else
+                eager ? "eager" : "lazy",
+                eager ? "off" : "on");
+            #else
             bool eager = true;
-#endif
+            #endif
             region_add_impl(HEAP_BASE, size, 5, 3, eager);
         }
         LOG("[kernel] SetHeapSize accepted: %llu MB at %llx\n",

@@ -327,6 +327,8 @@ static void *pc_saver(void *arg);
 
 static void create_device(void) {
     uint32_t ne = 0;
+    LOG("[vk] sparse heap %s (SAVAGEWIND_VK_SPARSE_HEAP)\n",
+        plat_guest_sparse_heap_enabled() ? "enabled" : "disabled");
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
@@ -363,14 +365,24 @@ static void create_device(void) {
     const char *ext[24];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-#ifdef VK_EXT_memory_budget
-    g_vk.memory_budget = has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    if (g_vk.memory_budget) ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
-    LOG("[vk] memory budget extension %s\n", g_vk.memory_budget ? "on" : "not supported");
-#endif
-#ifdef VK_EXT_memory_priority
+
     const char *memory_priority_env = getenv("SAVAGEWIND_VK_MEMORY_PRIORITY");
     bool request_memory_priority = memory_priority_env && !strcmp(memory_priority_env, "1");
+
+#ifdef VK_EXT_memory_budget
+    g_vk.memory_budget =
+        request_memory_priority &&
+        has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+
+    if (g_vk.memory_budget) {
+        ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
+    }
+
+    LOG("[vk] memory budget extension %s\n",
+        !request_memory_priority ? "off" :
+        g_vk.memory_budget ? "on" : "not supported");
+#endif
+#ifdef VK_EXT_memory_priority
     if (request_memory_priority && has_ext(ep, ne, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME)) {
         VkPhysicalDeviceMemoryPriorityFeaturesEXT priority_have = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT};
@@ -385,16 +397,19 @@ static void create_device(void) {
     LOG("[vk] memory priority %s\n", memory_priority_status);
 #endif
 #ifdef VK_EXT_pageable_device_local_memory
-    if (has_ext(ep, ne, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME)) {
-        VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable_have = {
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT};
-        VkPhysicalDeviceFeatures2 pageable_query = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                                     .pNext = &pageable_have};
-        vkGetPhysicalDeviceFeatures2(g_vk.phys, &pageable_query);
-        g_vk.pageable_device_local_memory = pageable_have.pageableDeviceLocalMemory;
-        if (g_vk.pageable_device_local_memory) ext[n_ext++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
-    }
+    if (plat_guest_sparse_heap_enabled() &&
+            has_ext(ep, ne, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME)) {
+            VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable_have = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT};
+            VkPhysicalDeviceFeatures2 pageable_query = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                .pNext = &pageable_have};
+            vkGetPhysicalDeviceFeatures2(g_vk.phys, &pageable_query);
+            g_vk.pageable_device_local_memory = pageable_have.pageableDeviceLocalMemory;
+            if (g_vk.pageable_device_local_memory) ext[n_ext++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
+        }
     LOG("[vk] pageable device-local memory %s\n",
+        !plat_guest_sparse_heap_enabled() ? "off" :
         g_vk.pageable_device_local_memory ? "on" : "not supported");
 #endif
     bool addr_report = g_addr_report_hi && has_ext(ep, ne, VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME);
@@ -472,8 +487,17 @@ static void create_device(void) {
     VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                                       .pNext = gpl ? (void *)&gpl_have : fbl ? (void *)&lr_have : NULL};
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
-    g_vk.sparse_buffer = have.features.sparseBinding && have.features.sparseResidencyBuffer;
-    g_vk.sparse_nonresident_strict = g_vk.props.sparseProperties.residencyNonResidentStrict;
+    g_vk.sparse_buffer = false;
+    g_vk.sparse_nonresident_strict = false;
+
+    if (plat_guest_sparse_heap_enabled()) {
+        g_vk.sparse_buffer =
+            have.features.sparseBinding &&
+            have.features.sparseResidencyBuffer;
+
+        g_vk.sparse_nonresident_strict =
+            g_vk.props.sparseProperties.residencyNonResidentStrict;
+    }
     LOG("[vk] sparse buffer feature enablement %s; nonresident strict %s\n",
         g_vk.sparse_buffer && g_vk.sparse_queue ? "available on selected queue" : "unavailable on selected queue/device",
         g_vk.sparse_nonresident_strict ? "yes" : "no");
@@ -609,7 +633,9 @@ static void create_device(void) {
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
     g_vk.present_queue = g_vk.queue;
     if (qi.queueCount == 2) vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 1, &g_vk.present_queue);
-    sparse_host_import_probe();
+    if (plat_guest_sparse_heap_enabled()) {
+        sparse_host_import_probe();
+    }
 
     VmaAllocatorCreateInfo ai = {.physicalDevice = g_vk.phys, .device = g_vk.dev, .instance = g_vk.inst,
                                  .vulkanApiVersion = VK_API_VERSION_1_3};
