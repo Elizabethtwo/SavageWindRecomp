@@ -3482,20 +3482,7 @@ static bool gmem_import(uint64_t size) {
         return false;
     VkPhysicalDeviceMemoryProperties memory;
     vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &memory);
-    uint32_t memory_type = UINT32_MAX;
-    int best_score = -1;
-    for (uint32_t i = 0; i < memory.memoryTypeCount; i++) {
-        if (!(mp.memoryTypeBits & (1u << i))) continue;
-        VkMemoryPropertyFlags flags = memory.memoryTypes[i].propertyFlags;
-        int score = (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? 0 : 4;
-        if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) score += 2;
-        if (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) score++;
-        if (score > best_score) {
-            best_score = score;
-            memory_type = i;
-        }
-    }
-    if (memory_type == UINT32_MAX) return false;
+    uint32_t memory_type = (uint32_t)__builtin_ctz(mp.memoryTypeBits);
     VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
                                             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
                                             .pHostPointer = (void *)(uintptr_t)HEAP_BASE};
@@ -3889,22 +3876,21 @@ static VkDescriptorBufferInfo gmem_info(void) {
     uint64_t want = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
     if (want > HEAP_MAX) want = HEAP_MAX;
     if (!off && !gmem_mapped) {
-        if (gmem_sparse) {
-#ifdef _WIN32
-            if (want > gmem_size) gmem_size = want;
-            if (!gmem_sparse_refresh(gmem_size)) FATAL("sparse guest heap page binding failed\n");
-#endif
-        } else if (!gmem_buf && want && !gmem_sparse_create(want)) {
-#ifdef _WIN32
-            if (plat_guest_sparse_heap_enabled())
-                FATAL("sparse guest heap initialization failed; refusing the slow dense fallback\n");
-#endif
-            if (!gmem_import(want)) {
+    #ifdef _WIN32
+            if (plat_guest_sparse_heap_enabled()) {
+                if (gmem_sparse) {
+                    if (want > gmem_size) gmem_size = want;
+                    if (!gmem_sparse_refresh(gmem_size)) FATAL("sparse guest heap page binding failed\n");
+                } else if (!gmem_buf && want && !gmem_sparse_create(want)) {
+                    FATAL("sparse guest heap initialization failed; refusing the slow dense fallback\n");
+                }
+            } else
+    #endif
+            if (want > gmem_size && !gmem_import(want)) {
                 LOG("[vk] guest heap import failed (%llu MB): shader global memory reads return zero\n", (unsigned long long)(want >> 20));
                 off = 1;
             }
         }
-    }
     if (gmem_buf) return (VkDescriptorBufferInfo){gmem_buf, 0, gmem_size};
     static uint32_t zero[1024];
     VkSpan s = vk_transient_copy(zero, sizeof zero, 256);
@@ -5085,7 +5071,7 @@ static void draw_(CmdRec *r, bool indexed) {
         stat_skipped++;
         return;
     }
-    if (profd) prof_program += SDL_GetTicksNS() - prof_program_start;
+    //if (profd) prof_program += SDL_GetTicksNS() - prof_program_start;
     {   // fragment-shader hash: skip lists (SAVAGEWIND_SKIP_FSHASH), debug logs, GPU profile labels
         static uint64_t last_fs, last_hash;
         static bool last_skip;

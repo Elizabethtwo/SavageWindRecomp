@@ -13,6 +13,7 @@
 #include "../astc.h"
 #include "../glyphs.h"
 #include "../renderer.h"
+#include "../../platform.h"
 
 // ================================================================== formats
 typedef struct { VkFormat vf; uint8_t expand_rgb, alpha_one; } VkFmt;
@@ -396,12 +397,13 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                             .extent = {tw, th, depth}, .mipLevels = levels, .arrayLayers = layers,
                             .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    const bool sparse = plat_guest_sparse_heap_enabled();
     VmaAllocationCreateInfo ai = image_allocation_info(&ci);
     // 2D color targets may be sampled by the draws that render into them (exec.c resolve_feedback: a feedback loop)
     b->feedback_ok = g_vk.feedback_loop && type == VK_IMAGE_TYPE_2D && samples == 1 && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (b->feedback_ok) ci.usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
-    if (image_out_of_memory(r)) {
+    if (sparse && image_out_of_memory(r)) {
         log_memory_budget("at image allocation failure");
         LOG("[vk] image allocation ran out of memory (%ux%ux%u, %u layers, %u levels); draining GPU work and retrying\n",
             tw, th, depth, layers, levels);
@@ -420,12 +422,12 @@ static void create_image(NvnTexture *t, TexBackend *b) {
 #endif
         r = vmaCreateImage(g_vk.vma, &ci, &retry_ai, &b->image, &b->mem, NULL);
     }
-    if (image_format_fallback_error(r) && b->feedback_ok) {
+    if ((sparse ? image_format_fallback_error(r) : r != VK_SUCCESS) && b->feedback_ok) {
         b->feedback_ok = false;
         ci.usage &= ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
         r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     }
-    if (image_format_fallback_error(r)) {
+    if (sparse ? image_format_fallback_error(r) : r != VK_SUCCESS) {
         LOG("[vk] image creation failed (%d): nvn fmt %#x %ux%ux%u target %u\n", r, t->format, t->width, t->height, t->depth, t->target);
         ci.format = vf = VK_FORMAT_R8G8B8A8_UNORM;
         ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
@@ -436,8 +438,8 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         depthfmt = false;
     }
     if (r != VK_SUCCESS) {
-        if (image_out_of_memory(r)) log_memory_budget("after allocation retry failed");
-        LOG("[vk] image creation failed (%d): nvn fmt %#x %ux%ux%u target %u\n", r, t->format, t->width, t->height, t->depth, t->target);
+        if (sparse && image_out_of_memory(r)) log_memory_budget("after allocation retry failed");
+        if (sparse) LOG("[vk] image creation failed (%d): nvn fmt %#x %ux%ux%u target %u\n", r, t->format, t->width, t->height, t->depth, t->target);
         VK_CHECK(r);
     }
     static uint64_t serials;
