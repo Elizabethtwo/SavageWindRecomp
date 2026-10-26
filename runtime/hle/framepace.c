@@ -100,6 +100,7 @@ bool framepace_title_ui(void) { return screen_up(1) || screen_up(0x38); }
 
 // (pause state 2: the pause menu's pages and the map; 4 is the quick menus over the game)
 bool framepace_menu_ui(void) { return *(uint32_t *)(uintptr_t)PAUSE_STATE == 2; }
+bool framepace_paused(void) { return in_menu(); }
 
 int framepace_target(void) {
     static int forced = -2, movie = -2, menu = -2, event = -2;
@@ -144,11 +145,15 @@ static double on_refresh(double fps) {
     return n >= 1 && fabs(hz / n - fps) < fps * 0.01 ? hz / n : fps;
 }
 
+// With frame generation (Video > Frame generation, vulkan/framegen.cpp) a frame is made between each two the game
+// draws: the frame rate counts the presented frames, so the game draws at half of it (60 with 120 chosen).
+volatile int g_fg_active;  // (vulkan/device.c: the last frame was generated)
+
 uint64_t framepace_period_ns(void) {
     int target = framepace_target();
     double fps = target > 0 ? target : FPS_CEILING, cap = vsync_cap();
     if (cap > 0 && fps > cap) fps = cap;
-    return (uint64_t)(1e9 / on_refresh(fps) + 0.5);
+    return (uint64_t)((g_fg_active ? 2e9 : 1e9) / on_refresh(fps) + 0.5);
 }
 
 // The frame loop's vsync wait: the present keeps the pace instead (1: skipped; 0: the game's own wait).
@@ -209,7 +214,11 @@ void rt_vfr_update(uint64_t vfr) {
     g_fs_vfr = plat_now_ns();
     clock_probe(vfr);
     log_screens();
-    if (!framepace_on()) return;
+    extern void input_cam_frame(float ratio);  // runtime/hle/input.c: the mouse's motion in the frame, for the cameras
+    if (!framepace_on()) {
+        input_cam_frame(VF(float, vfr, VFR_RATIO));
+        return;
+    }
     static uint64_t last_t;
     static double real, given;  // seconds of real time and of game time handed out (only their gap matters)
     static double smooth;       // seconds between updates, averaged over about 20
@@ -269,6 +278,7 @@ void rt_vfr_update(uint64_t vfr) {
     VF(uint32_t, vfr, VFR_INTERVAL) = iv;
     VF(uint8_t, vfr, VFR_CHANGED) = last_iv && iv != last_iv;
     last_iv = iv;
+    input_cam_frame(ratio);
     if (log_every > 0 && nframe++ % (uint64_t)log_every == 0) {
         uint64_t pinfo = *(uint64_t *)(uintptr_t)g_site.player_info;  // (Link's position: PlayerInfo +0x88)
         LOG("[framepace] target %d fps, %.2f ms since the last update (avg %.2f), ratio %.3f, interval %u, owed "

@@ -32,11 +32,26 @@ mouse, and its text and voices in any of its languages.
 > Savage Wind never decrypts anything: it only reads files you have already extracted yourself. The recompilation of
 > the game code happens locally, on your machine, from your files.
 
+## Before you report a bug
+
+- **Use the [latest release](https://github.com/Revivedx/SavageWindRecomp/releases/latest)** and game version
+  **1.9.0**: 1.8.2 isn't supported, and many bugs of older releases are already fixed.
+- **Search the [existing issues](https://github.com/Revivedx/SavageWindRecomp/issues?q=is%3Aissue)** first.
+- **Attach `savagewind.log`.** On Windows it's next to `savagewind.exe`, in the Savage Wind folder; on Linux, in
+  `~/.local/share/savagewind/`. The game writes a new one each time it starts, so take it right after the bug.
+- Reports missing any of these get a `needs-info` label and are closed after 7 days without it.
+
 ## Getting started (Alpha 3)
 
+**You need:** a 64-bit CPU with SSE4.2 (AVX2 runs faster), a GPU with a Vulkan 1.3 driver, and 16 GB of RAM. With
+integrated graphics, which share the PC's RAM, 8 GB isn't enough: the game's 3 GB of memory has to stay available
+to the GPU ([#117](https://github.com/Revivedx/SavageWindRecomp/issues/117)).
+
 1. Download from [Releases](https://github.com/Revivedx/SavageWindRecomp/releases):
-   - **Windows:** `SavageWind-0.3.0-alpha.3-windows.zip`. Extract it to a folder you can write to (not Program
-     Files): your game files, saves and settings are kept in that folder.
+   - **Windows:** `SavageWind-0.3.1-alpha.3-windows.zip`. Extract it to a folder you can write to (not Program
+     Files): your game files, saves and settings are kept in that folder. 0.3.1 is a hotfix for AMD and Intel
+     graphics on Windows (a black window in 0.3.0, [#85](https://github.com/Revivedx/SavageWindRecomp/issues/85)); on
+     NVIDIA it runs exactly as 0.3.0.
    - **Linux (x86-64, Steam Deck too):** `Savage_Wind-0.3.0-alpha.3-x86_64.AppImage`. Make it executable
      (`chmod +x`) and run it; your game files, saves and settings go to `~/.local/share/savagewind`. See
      [docs/linux.md](docs/linux.md).
@@ -45,7 +60,7 @@ mouse, and its text and voices in any of its languages.
      "Testing on ARM").
 2. Run `savagewind.exe` (or the AppImage). The first time it asks for your game files: pick the folder with your own
    extracted game (`exefs/` and `romfs/`, version 1.9.0, see below) and choose **Set up game files**. It checks the
-   version, copies the files, builds the data image and recompiles the game code on your machine - once (about 6
+   version, copies the files and recompiles the game code on your machine - once (about 6
    minutes for the game code with a 12-thread CPU, plus the copy and the optional shader precompilation). Your own
    files aren't changed. When it's done the game starts.
 3. From then on Savage Wind goes straight into the game. The settings, including the text and voice languages,
@@ -63,7 +78,7 @@ The setup and configuration screens show Savage Wind's own art. To see a picture
 next to `savagewind.exe` (on Linux, in the data folder) as `splash.jpg` or `splash.png`; it's only read from your folder and never part of
 Savage Wind.
 
-Needs Windows 10 or later, a CPU with SSE4.2 (2008 or newer), a GPU with Vulkan 1.3 and about 35 GB of free disk
+Needs Windows 10 or later, a CPU with SSE4.2 (2008 or newer), a GPU with Vulkan 1.3 and about 20 GB of free disk
 space. AVX2 isn't required: on a CPU without AVX2 / FMA the setup builds the game code in a compatible mode, which runs
 slower.
 
@@ -118,13 +133,13 @@ Estimates of where each part stands. "Tested in game" is how much of the game ha
 | 🔧 | **Horizon OS services** | ![90%](https://progress-bar.xyz/90/?width=150&style=square&progress_color=5cb85c) | Threads, files, controllers, applets and time: all the opening and the Great Plateau use |
 | 🔧 | **Maxwell shader translator** | ![90%](https://progress-bar.xyz/90/?width=150&style=square&progress_color=5cb85c) | Every shader seen so far translates to Vulkan |
 | 🔧 | **Graphics (NVN on Vulkan)** | ![80%](https://progress-bar.xyz/80/?width=150&style=square&progress_color=5cb85c) | Shrine and Great Plateau look right, shadows included; far parts of the map can still be missing ([#20](https://github.com/Revivedx/SavageWindRecomp/issues/20)) |
-| 🔧 | **Controllers** | ![70%](https://progress-bar.xyz/70/?width=150&style=square&progress_color=5cb85c) | Any controller SDL knows, by button position; automatic recognition is next, then camera speed set apart for each axis |
-| 🔧 | **Motion controls (gyro)** | ![80%](https://progress-bar.xyz/80/?width=150&style=square&progress_color=5cb85c) | The controller's gyroscope and accelerometer (DualSense, DualShock 4, Switch controllers, Steam Deck) for motion aiming and the tilt shrines; without one, hold T and move the mouse to tilt. Sensitivity and inversion in Options > Controls. Not yet tried with a real controller or in a shrine |
+| 🔧 | **Controllers** | ![80%](https://progress-bar.xyz/80/?width=150&style=square&progress_color=5cb85c) | Any controller SDL knows, by button position, confirmed by players; automatic recognition is next, then camera speed set apart for each axis |
+| ✅ | **Motion controls (gyro)** | ![100%](https://progress-bar.xyz/100/?width=150&style=square&progress_color=5cb85c) | The controller's gyroscope and accelerometer (DualSense, DualShock 4, Switch controllers, Steam Deck) for motion aiming and the tilt shrines; without one, hold T and move the mouse to tilt. Sensitivity and inversion in Options > Controls. Confirmed by players with real controllers |
 | 🔧 | **Button icons for your device** | ![80%](https://progress-bar.xyz/80/?width=150&style=square&progress_color=5cb85c) | The game's button prompts show your bound keys and mouse buttons, or Xbox / PlayStation / Nintendo buttons, switching with the device you use |
-| 🔧 | **Variable refresh rate (VRR)** | ![80%](https://progress-bar.xyz/80/?width=150&style=square&progress_color=5cb85c) | Video > VSync: On lets G-SYNC and FreeSync displays show every frame as soon as it's ready, a little under the refresh rate; Fast (the default), Adaptive and Off too. Still to be tried on a VRR display |
+| ✅ | **Variable refresh rate (VRR)** | ![100%](https://progress-bar.xyz/100/?width=150&style=square&progress_color=5cb85c) | Video > VSync: On lets G-SYNC and FreeSync displays show every frame as soon as it's ready, a little under the refresh rate; Fast (the default), Adaptive and Off too. Tried on a VRR display |
 | 🔧 | **Tested in game** | ![50%](https://progress-bar.xyz/50/?width=150&style=square&progress_color=f0ad4e) | The Shrine of Resurrection, the Great Plateau, and a walk through every region on a 100% save file. The main quests and the Divine Beasts aren't tested yet, so expect bugs there: [report what breaks](https://github.com/Revivedx/SavageWindRecomp/issues/new/choose) |
 | 🔧 | **Linux** | ![90%](https://progress-bar.xyz/90/?width=150&style=square&progress_color=5cb85c) | Builds and runs on x86-64 (from LAS Recomp); a steady 144 fps on an RTX 3070 Ti with a Ryzen 5 7600X, and no Linux-only issues so far |
-| 🗺️ | **AMD FSR 3 + frame generation** | ![5%](https://progress-bar.xyz/5/?width=150&style=square&progress_color=d9534f) | Planned: motion vectors from depth and the camera, FidelityFX SDK |
+| 🔧 | **AMD FSR 3 + frame generation** | ![60%](https://progress-bar.xyz/60/?width=150&style=square&progress_color=f0ad4e) | Video > Frame generation (AMD FSR 3): a frame made between each two the game draws, about twice the frames on screen, with the HUD kept sharp. Motion vectors from depth and the camera, and Link's own; enemies and animals can still leave a faint smear. Smooth with VSync and G-SYNC. Works on Windows; Linux and the Steam Deck aren't tried yet. Only frame generation for now: FSR 3 upscaling is next |
 | 🗺️ | **NVIDIA DLSS (RTX)** | ![0%](https://progress-bar.xyz/0/?width=150&style=square&progress_color=d9534f) | Planned, after FSR 3; under NVIDIA's own SDK license |
 | 🗺️ | **Colour grading and HDR** | ![0%](https://progress-bar.xyz/0/?width=150&style=square&progress_color=d9534f) | Planned: exposure, contrast and saturation settings, colour presets, fog and bloom on or off, and real HDR output on HDR displays |
 | 🗺️ | **Draw distance and detail** | ![0%](https://progress-bar.xyz/0/?width=150&style=square&progress_color=d9534f) | Planned: trees, grass and objects drawn farther away on strong PCs, or nearer for more fps, and a fixed level of detail (the most detailed models at any distance) |
@@ -159,10 +174,13 @@ Steam Deck) also aims and tilts by motion. Keyboard and mouse defaults:
 | Tilt the controller (hold, motion puzzles) | T + mouse | | |
 
 Every key and mouse button can be remapped in the game's Options (the Keyboard pages), next to the mouse sensitivity
-and Y inversion, motion sensitivity and inversion and the tilt key (Controls). The game's button prompts show the
-keys you bound, or your controller's own buttons (Controls > Button icons: Automatic follows the device you use).
-Esc frees the cursor, a click in the window takes it back. F10 cycles the performance
-overlay (off, FPS, full).
+(horizontal and vertical) and Y inversion, motion sensitivity and inversion and the tilt key (Controls). The game's
+button prompts show the keys you bound, or your controller's own buttons (Controls > Button icons: Automatic follows
+the device you use). The mouse turns the camera directly, as in a PC game: 0.022° per count at 100% sensitivity (as
+Quake and Source count it), on both axes (the vertical one scaled by Controls > Mouse vertical sensitivity), with no
+acceleration or top speed, the same at any frame rate. The bow's and the scope's own slower speeds stay, and so do the
+game's camera speed setting and its camera axis inversion options. Esc frees the cursor, a click in the window takes
+it back. F10 cycles the performance overlay (off, FPS, full).
 
 ## Building from source
 
@@ -178,8 +196,6 @@ More detail in [docs/BUILD-windows.md](docs/BUILD-windows.md).
    - `make -j` builds the app, `build/savagewind.exe`.
    - Put your files in `extracted/` (above), then `make gen` (recompiles the game code into `generated/`, about a
      minute) and `make -j` again (builds it into `build/swgame.dll`; the first build takes 15-20 minutes).
-   - `build/savagewind.exe extracted --build-romfs` packs your RomFS into the image the runtime reads
-     (`extracted/romfs.bin`, about 15 GB).
 3. Run: `build/savagewind.exe extracted --play`, from a shell with `C:\msys64\ucrt64\bin` on PATH.
 
 ### Linux
@@ -218,6 +234,8 @@ switches - are in [docs/SAVAGE-WIND.md](docs/SAVAGE-WIND.md).
   [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) (MIT),
   [SMAA](https://github.com/iryoku/smaa) (MIT), [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR)
   (MIT), [AMD FidelityFX CAS](https://github.com/GPUOpen-Effects/FidelityFX-CAS) (MIT),
+  [AMD FidelityFX SDK 1.1.4](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/tree/v1.1.4) (MIT: FSR 3 frame
+  generation),
   [Fira Sans](https://github.com/mozilla/Fira) (SIL OFL 1.1), [Noto Sans Thai](https://github.com/notofonts/thai)
   (SIL OFL 1.1), [stb_image / stb_image_write](https://github.com/nothings/stb)
   (public domain / MIT), [shaderc](https://github.com/google/shaderc)
@@ -244,5 +262,8 @@ The Windows release zip also bundles, unchanged unless noted, under their own li
 - `swgen/`, this project's generator frozen with PyInstaller 6.22 (GPL 2.0 with the bootloader exception): Python
   3.14 (PSF License), Capstone 5.0.9 (BSD), [Unicorn 2.1.4](https://github.com/unicorn-engine/unicorn/tree/2.1.4)
   (GPL 2.0, source at that link) and python-lz4 4.4.5 (BSD).
+- AMD FidelityFX SDK 1.1.4 (MIT, `FidelityFX-LICENSE.txt`), compiled into savagewind.exe: FSR 3 frame interpolation,
+  optical flow and the Vulkan backend, from [its source](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/tree/v1.1.4)
+  with two alignment fixes (`third_party/FidelityFX/README.md`) and shaders compiled by `tools/ffx_shaders.py`.
 - The Fira Sans font, Medium and SemiBold (SIL OFL 1.1, `FiraSans-OFL.txt`), and the Noto Sans Thai font, Medium,
   for the menus in Thai (SIL OFL 1.1, `NotoSansThai-OFL.txt`).
