@@ -312,6 +312,8 @@ typedef struct { VkImage img; VmaAllocation mem; VkImageView view; uint64_t seq;
 static Dead *dead;
 static int ndead, cap_dead;
 static void views_forget(TexBackend *b);
+static bool image_format_fallback_error(VkResult r);
+static bool image_out_of_memory(VkResult r);
 
 void vk_collect_dead(void) {
     uint64_t done = vk_completed_seq();
@@ -436,7 +438,6 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         if (b->feedback_ok) {
             ci.usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
         }
-        ai = image_allocation_info(&ci);
         r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     }
     if (image_format_fallback_error(r)) {
@@ -503,6 +504,14 @@ void vk_dl_note_upload(void *img, uint32_t w, uint32_t h, uint32_t lv);  // (exe
 
 static uint32_t level_w(const TexBackend *b, uint32_t lv) { uint32_t v = b->width >> lv; return v ? v : 1; }
 static uint32_t level_h(const TexBackend *b, uint32_t lv) { uint32_t v = b->height >> lv; return v ? v : 1; }
+
+static bool image_format_fallback_error(VkResult r) {
+    return r == VK_ERROR_FORMAT_NOT_SUPPORTED || r == VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+static bool image_out_of_memory(VkResult r) {
+    return r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY;
+}
 
 static void destroy_image(TexBackend *b) {
     if (b->block) {
